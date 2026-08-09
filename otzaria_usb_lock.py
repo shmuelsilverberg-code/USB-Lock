@@ -25,6 +25,26 @@ import time
 import customtkinter as ctk
 from PIL import Image
 
+try:
+    from bidi.algorithm import get_display
+    _BIDI_OK = True
+except Exception:
+    _BIDI_OK = False
+
+
+def rtl(text, lang):
+    """Tkinter draws text in logical (typed) order and has no built-in
+    Unicode Bidi Algorithm, so Hebrew comes out reading left-to-right
+    unless we reorder it ourselves first. python-bidi does that reordering
+    (and handles strings that mix Hebrew with numbers/English correctly)."""
+    if lang == "he" and _BIDI_OK and text:
+        try:
+            return get_display(text)
+        except Exception:
+            return text
+    return text
+
+
 # --------------------------------------------------------------------------
 # Resource path helper (works both as a plain .py and as a PyInstaller .exe)
 # --------------------------------------------------------------------------
@@ -256,19 +276,20 @@ STR = {
 }
 
 # --------------------------------------------------------------------------
-# Otzaria M3 colour tokens (from the app's own design guide)
+# Otzaria gold/brown colour tokens (חום זהבהב) - sampled from the app icon's
+# own gold gradient rather than the app's generic purple M3 palette
 # --------------------------------------------------------------------------
-C_PRIMARY = "#6750A4"
+C_PRIMARY = "#8C6A1F"            # golden-brown - buttons, accents
 C_ON_PRIMARY = "#FFFFFF"
-C_PRIMARY_SUBTLE = "#EDE7F6"
-C_SURFACE = "#FFFBFE"
-C_ON_SURFACE = "#1C1B1F"
-C_ON_SURFACE_VARIANT = "#49454F"
-C_SURFACE_HIGH = "#ECE6F0"
-C_SURFACE_HIGHEST = "#E6E0E9"
-C_ERROR = "#B3261E"
+C_PRIMARY_SUBTLE = "#F3E6C8"     # light gold tint - tonal button fill
+C_SURFACE = "#FFFCF5"            # warm off-white - cards
+C_ON_SURFACE = "#3B2A0F"         # dark brown - main text
+C_ON_SURFACE_VARIANT = "#6B5730" # medium gold-brown - secondary text
+C_SURFACE_HIGH = "#F1E6CC"       # warm beige - window background
+C_SURFACE_HIGHEST = "#E8D8AE"    # deeper beige - hover/secondary bg
+C_ERROR = "#A13A1E"              # warm brick red - stays recognizable as "danger"
 C_ON_ERROR = "#FFFFFF"
-C_OUTLINE = "#79747E"
+C_OUTLINE = "#B69B5E"            # gold-brown outline/border
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")  # overridden per-widget below
@@ -301,9 +322,9 @@ class ConfirmDialog(ctk.CTkToplevel):
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=18)
-        ctk.CTkButton(btn_row, text=STR[lang]["ok"], fg_color=C_PRIMARY, hover_color=C_PRIMARY,
+        ctk.CTkButton(btn_row, text=rtl(STR[lang]["ok"], lang), fg_color=C_PRIMARY, hover_color=C_PRIMARY,
                       corner_radius=18, width=110, command=self._ok).pack(side="left", padx=8)
-        ctk.CTkButton(btn_row, text=STR[lang]["cancel"], fg_color=C_SURFACE_HIGHEST, text_color=C_ON_SURFACE,
+        ctk.CTkButton(btn_row, text=rtl(STR[lang]["cancel"], lang), fg_color=C_SURFACE_HIGHEST, text_color=C_ON_SURFACE,
                       hover_color=C_SURFACE_HIGH, corner_radius=18, width=110, command=self._cancel).pack(side="left", padx=8)
 
         self.bind("<Return>", lambda e: self._ok())
@@ -427,7 +448,7 @@ class App(ctk.CTk):
         card3.pack(fill="both", expand=True, padx=20, pady=(0, 10))
         self.lbl_log = ctk.CTkLabel(card3, text="", font=("Segoe UI", 12, "bold"), text_color=C_ON_SURFACE_VARIANT)
         self.lbl_log.pack(anchor="w", padx=16, pady=(14, 6))
-        self.txt_log = ctk.CTkTextbox(card3, fg_color=C_ON_SURFACE, text_color="#D8D0E0", font=("Consolas", 11),
+        self.txt_log = ctk.CTkTextbox(card3, fg_color=C_ON_SURFACE, text_color="#E8D8AE", font=("Consolas", 11),
                                        corner_radius=10)
         self.txt_log.pack(fill="both", expand=True, padx=16, pady=(0, 14))
         self.txt_log.configure(state="disabled")
@@ -442,26 +463,31 @@ class App(ctk.CTk):
         self._apply_lang()
         self._render_drive_info()
 
+    def t(self, key):
+        """Look up a string in the current language and reorder it for
+        correct right-to-left display when needed."""
+        return rtl(STR[self.lang][key], self.lang)
+
     def _apply_lang(self):
-        s = STR[self.lang]
-        self.title(s["app_title"])
-        self.lbl_title.configure(text=s["app_title"])
-        self.lbl_subtitle.configure(text=s["app_subtitle"])
-        self.btn_lang.configure(text=s["lang_btn"])
-        self.lbl_select.configure(text=s["select_drive"])
-        self.btn_refresh.configure(text=s["refresh"])
-        self.lbl_prepare.configure(text=s["prepare"])
-        self.btn_open.configure(text=s["open_drive"])
-        self.btn_format.configure(text=s["format_btn"])
-        self.btn_lock.configure(text="🔒 " + s["lock_btn"])
-        self.btn_unlock.configure(text="♻ " + s["unlock_btn"])
-        self.lbl_log.configure(text=s["log_label"])
-        self.lbl_footer.configure(text=s["footer"])
+        self.title(self.t("app_title"))
+        self.lbl_title.configure(text=self.t("app_title"))
+        self.lbl_subtitle.configure(text=self.t("app_subtitle"))
+        self.btn_lang.configure(text=self.t("lang_btn"))
+        self.lbl_select.configure(text=self.t("select_drive"))
+        self.btn_refresh.configure(text="🔄 " + self.t("refresh"))
+        self.lbl_prepare.configure(text=self.t("prepare"))
+        self.btn_open.configure(text=self.t("open_drive"))
+        self.btn_format.configure(text=self.t("format_btn"))
+        self.btn_lock.configure(text="🔒 " + self.t("lock_btn"))
+        self.btn_unlock.configure(text="↺ " + self.t("unlock_btn"))
+        self.lbl_log.configure(text=self.t("log_label"))
+        self.lbl_footer.configure(text=self.t("footer"))
         anchor = "e" if self.lang == "he" else "w"
         just = "right" if self.lang == "he" else "left"
         for w in (self.lbl_title, self.lbl_subtitle, self.lbl_select, self.lbl_prepare, self.lbl_log):
             w.configure(anchor=anchor)
         self.lbl_footer.configure(justify=just)
+        self._check_admin()
 
     # ---------------- log ----------------
     def log(self, msg):
@@ -475,21 +501,18 @@ class App(ctk.CTk):
 
     # ---------------- admin ----------------
     def _check_admin(self):
-        s = STR[self.lang]
         if is_admin():
-            self.lbl_admin.configure(text="✓ " + STR["he"]["admin_ok"] + " / " + STR["en"]["admin_ok"],
-                                      text_color="#2E7D32")
+            self.lbl_admin.configure(text="✓ " + self.t("admin_ok"), text_color="#2E7D32")
         else:
-            self.lbl_admin.configure(text="⚠ " + STR["he"]["admin_bad"] + " / " + STR["en"]["admin_bad"],
-                                      text_color=C_ERROR)
+            self.lbl_admin.configure(text="⚠ " + self.t("admin_bad"), text_color=C_ERROR)
 
     # ---------------- drives ----------------
     def refresh_drives(self):
         self.drives = get_removable_drives()
-        s = STR[self.lang]
         if not self.drives:
-            self.drive_menu.configure(values=[s["no_drives"]])
-            self.drive_var.set(s["no_drives"])
+            no_drives = self.t("no_drives")
+            self.drive_menu.configure(values=[no_drives])
+            self.drive_var.set(no_drives)
             self._set_buttons(False)
             self.selected = None
             self._render_drive_info()
@@ -509,12 +532,12 @@ class App(ctk.CTk):
         self._render_drive_info()
 
     def _render_drive_info(self):
-        s = STR[self.lang]
         if not self.selected:
             self.lbl_drive_info.configure(text="")
             return
-        self.lbl_drive_info.configure(text=s["drive_info"].format(
-            label=self.selected["label"] or "-", fs=self.selected["fs"], size=self.selected["size_gb"]))
+        text = STR[self.lang]["drive_info"].format(
+            label=self.selected["label"] or "-", fs=self.selected["fs"], size=self.selected["size_gb"])
+        self.lbl_drive_info.configure(text=rtl(text, self.lang))
 
     def _set_buttons(self, enabled):
         state = "normal" if enabled else "disabled"
@@ -524,29 +547,30 @@ class App(ctk.CTk):
     # ---------------- confirmations ----------------
     def _confirm_letter(self):
         if not self.selected:
-            self.log(STR[self.lang]["no_drive_selected"])
+            self.log(self.t("no_drive_selected"))
             return False
-        s = STR[self.lang]
-        typed = ConfirmDialog.ask(self, s["confirm_letter_title"], s["confirm_letter_msg"], self.lang)
+        typed = ConfirmDialog.ask(self, self.t("confirm_letter_title"), self.t("confirm_letter_msg"), self.lang)
         if typed is None:
             return False
         if typed.strip().rstrip(":").upper() != self.selected["letter"]:
-            self.log(s["letter_mismatch"])
+            self.log(self.t("letter_mismatch"))
             return False
         return True
 
     def _confirm_erase_word(self):
-        s = STR[self.lang]
-        typed = ConfirmDialog.ask(self, s["confirm_format_title"], s["confirm_format_msg"], self.lang)
-        if typed is None or typed.strip() != s["format_word"]:
-            self.log(s["format_cancelled"])
+        # Compare against the RAW word (not bidi-reordered) - the entry box
+        # holds what the user actually typed, in logical order.
+        expected = STR[self.lang]["format_word"]
+        typed = ConfirmDialog.ask(self, self.t("confirm_format_title"), self.t("confirm_format_msg"), self.lang)
+        if typed is None or typed.strip() != expected:
+            self.log(self.t("format_cancelled"))
             return False
         return True
 
     # ---------------- actions ----------------
     def on_open(self):
         if not self.selected:
-            self.log(STR[self.lang]["no_drive_selected"])
+            self.log(self.t("no_drive_selected"))
             return
         try:
             open_in_explorer(self.selected["letter"])
@@ -554,12 +578,11 @@ class App(ctk.CTk):
             self.log(str(e))
 
     def on_format(self):
-        s = STR[self.lang]
         if not self.selected:
-            self.log(s["no_drive_selected"])
+            self.log(self.t("no_drive_selected"))
             return
         if self.selected["fs"] == "NTFS":
-            self.log(s["already_ntfs"])
+            self.log(self.t("already_ntfs"))
             return
         if not self._confirm_letter():
             return
@@ -567,41 +590,39 @@ class App(ctk.CTk):
             return
         letter = self.selected["letter"]
         self._set_buttons(False)
-        self.log(s["formatting"])
+        self.log(self.t("formatting"))
 
         def work():
             ok = format_drive_ntfs(letter, "OTZARIA", log=self.log)
-            self.log(s["format_done"] if ok else s["format_failed"])
+            self.log(self.t("format_done") if ok else self.t("format_failed"))
             self.after(0, self.refresh_drives)
 
         threading.Thread(target=work, daemon=True).start()
 
     def on_lock(self):
-        s = STR[self.lang]
         if not self._confirm_letter():
             return
         letter = self.selected["letter"]
         self._set_buttons(False)
-        self.log(s["locking"])
+        self.log(self.t("locking"))
 
         def work():
             ok = lock_drive(letter, log=self.log)
-            self.log(s["lock_done"] if ok else s["lock_failed"])
+            self.log(self.t("lock_done") if ok else self.t("lock_failed"))
             self.after(0, lambda: self._set_buttons(True))
 
         threading.Thread(target=work, daemon=True).start()
 
     def on_unlock(self):
-        s = STR[self.lang]
         if not self._confirm_letter():
             return
         letter = self.selected["letter"]
         self._set_buttons(False)
-        self.log(s["unlocking"])
+        self.log(self.t("unlocking"))
 
         def work():
             ok = unlock_drive(letter, log=self.log)
-            self.log(s["unlock_done"] if ok else s["unlock_failed"])
+            self.log(self.t("unlock_done") if ok else self.t("unlock_failed"))
             self.after(0, lambda: self._set_buttons(True))
 
         threading.Thread(target=work, daemon=True).start()
