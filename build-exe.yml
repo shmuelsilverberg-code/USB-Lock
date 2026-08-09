@@ -1,0 +1,41 @@
+name: Build Otzaria USB Lock exe
+
+on:
+  push:
+    paths:
+      - "otzaria_usb_lock.py"
+      - "requirements.txt"
+      - "*.png"
+      - "*.ico"
+      - ".github/workflows/build-exe.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build exe
+        run: |
+          pyinstaller --onefile --windowed --uac-admin `
+            --name "Otzaria-USB-Lock" `
+            --icon "otzaria-usb-lock.ico" `
+            --add-data "logo-80.png;." `
+            --add-data "otzaria-usb-lock.ico;." `
+            otzaria_usb_lock.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Otzaria-USB-Lock-windows
+          path: dist/Otzaria-USB-Lock.exe
