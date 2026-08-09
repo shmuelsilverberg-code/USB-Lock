@@ -211,12 +211,12 @@ STR = {
         "lock_btn": "נעילת הדיסק להפצה",
         "unlock_btn": "שחזור הרשאות רגילות",
         "log_label": "יומן פעולות",
-        "footer": "הנעילה חוסמת כתיבה מכל חשבון פרט לחשבון הזה במחשב זה.",
+        "footer": "הנעילה חוסמת כתיבה מכל חשבון פרט לחשבון הזה במחשב זה. מנהל מערכת במחשב אחר עדיין יכול לעקוף את הנעילה.",
         "confirm_letter_title": "אימות דיסק",
         "confirm_letter_msg": "הקלידו את אות הדיסק הנבחר לאישור (למשל E):",
         "letter_mismatch": "האות שהוקלדה אינה תואמת. הפעולה בוטלה.",
         "confirm_format_title": "אזהרה - מחיקת נתונים",
-        "confirm_format_msg": "פעולה זו תמחק את כל תוכן הדיסק! הקלידו בדיוק את המילה מחק כדי להמשיך:",
+        "confirm_format_msg": "פעולה זו תמחק את כל תוכן הדיסק! הקלידו בדיוק את המילה הבאה כדי להמשיך:",
         "format_word": "מחק",
         "format_cancelled": "הפרמוט בוטל.",
         "formatting": "מפרמט את הדיסק ל-NTFS...",
@@ -249,12 +249,12 @@ STR = {
         "lock_btn": "Lock drive for distribution",
         "unlock_btn": "Reset to normal permissions",
         "log_label": "Status Log",
-        "footer": "Locking blocks write access from every account except this one on this PC.",
+        "footer": "Locking blocks write access from every account except this one on this PC. A local administrator on another PC can still override the lock.",
         "confirm_letter_title": "Confirm Drive",
         "confirm_letter_msg": "Type the selected drive letter to confirm (e.g. E):",
         "letter_mismatch": "The letter you typed doesn't match. Action cancelled.",
         "confirm_format_title": "Warning - data will be erased",
-        "confirm_format_msg": "This will erase everything on the drive! Type exactly ERASE to continue:",
+        "confirm_format_msg": "This will erase everything on the drive! Type exactly the word below to continue:",
         "format_word": "ERASE",
         "format_cancelled": "Format cancelled.",
         "formatting": "Formatting drive to NTFS...",
@@ -304,7 +304,7 @@ class ConfirmDialog(ctk.CTkToplevel):
         self.expected_word = expected_word
         self.lang = lang
         self.title(title)
-        self.geometry("420x220")
+        self.geometry("420x260")
         self.resizable(False, False)
         self.configure(fg_color=C_SURFACE)
         self.transient(master)
@@ -315,6 +315,13 @@ class ConfirmDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(self, text=message, wraplength=370, justify=justify,
                      text_color=C_ON_SURFACE, font=("Segoe UI", 13)).pack(padx=20, pady=(24, 10), anchor=anchor)
+
+        # The word to type - in BOLD
+        if expected_word:
+            word_frame = ctk.CTkFrame(self, fg_color="transparent")
+            word_frame.pack(pady=(0, 10), anchor=anchor)
+            ctk.CTkLabel(word_frame, text=rtl(expected_word, lang), 
+                         text_color=C_PRIMARY, font=("Segoe UI", 14, "bold")).pack()
 
         self.entry = ctk.CTkEntry(self, width=360, justify=justify)
         self.entry.pack(padx=20, pady=6)
@@ -340,8 +347,8 @@ class ConfirmDialog(ctk.CTkToplevel):
         self.destroy()
 
     @staticmethod
-    def ask(master, title, message, lang):
-        dlg = ConfirmDialog(master, title, message, None, lang)
+    def ask(master, title, message, expected_word, lang):
+        dlg = ConfirmDialog(master, title, message, expected_word, lang)
         master.wait_window(dlg)
         return dlg.result
 
@@ -493,6 +500,9 @@ class App(ctk.CTk):
     def log(self, msg):
         if not msg:
             return
+        self.after(0, lambda: self._log_to_widget(msg))
+
+    def _log_to_widget(self, msg):
         self.txt_log.configure(state="normal")
         stamp = time.strftime("%H:%M:%S")
         self.txt_log.insert("end", "[{}] {}\n".format(stamp, msg))
@@ -549,7 +559,8 @@ class App(ctk.CTk):
         if not self.selected:
             self.log(self.t("no_drive_selected"))
             return False
-        typed = ConfirmDialog.ask(self, self.t("confirm_letter_title"), self.t("confirm_letter_msg"), self.lang)
+        typed = ConfirmDialog.ask(self, self.t("confirm_letter_title"), self.t("confirm_letter_msg"),
+                                  self.selected["letter"], self.lang)
         if typed is None:
             return False
         if typed.strip().rstrip(":").upper() != self.selected["letter"]:
@@ -561,7 +572,8 @@ class App(ctk.CTk):
         # Compare against the RAW word (not bidi-reordered) - the entry box
         # holds what the user actually typed, in logical order.
         expected = STR[self.lang]["format_word"]
-        typed = ConfirmDialog.ask(self, self.t("confirm_format_title"), self.t("confirm_format_msg"), self.lang)
+        typed = ConfirmDialog.ask(self, self.t("confirm_format_title"), self.t("confirm_format_msg"),
+                                  expected, self.lang)
         if typed is None or typed.strip() != expected:
             self.log(self.t("format_cancelled"))
             return False
