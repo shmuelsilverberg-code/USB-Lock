@@ -249,7 +249,7 @@ STR = {
         "lock_btn": "Lock drive for distribution",
         "unlock_btn": "Reset to normal permissions",
         "log_label": "Status Log",
-        "footer": "Locking blocks write access from every account except this one on this PC. A local administrator on another PC can still override the lock.",
+        "footer": "Locking blocks write access from every account except this one on this PC.",
         "confirm_letter_title": "Confirm Drive",
         "confirm_letter_msg": "Type the selected drive letter to confirm (e.g. E):",
         "letter_mismatch": "The letter you typed doesn't match. Action cancelled.",
