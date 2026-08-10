@@ -28,11 +28,12 @@ jobs:
       - name: Build exe
         run: |
           pyinstaller --onefile --windowed --uac-admin `
-            --name "Otzaria-USB-Lock" `
-            --icon "otzaria-usb-lock.ico" `
-            --add-data "logo-80.png;." `
-            --add-data "otzaria-usb-lock.ico;." `
-            otzaria_usb_lock.py
+              --name "Otzaria-USB-Lock" `
+              --icon "otzaria-usb-lock.ico" `
+              --add-data "logo-80.png;." `
+              --add-data "otzaria-usb-lock.ico;." `
+              --hidden-import=bidi.algorithm `
+               otzaria_usb_lock.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
