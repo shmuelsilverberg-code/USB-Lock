@@ -1,16 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Otzaria USB Lock
------------------
+Otzaria USB Lock (PySide6 edition)
+-----------------------------------
 Prepares a USB drive for safe distribution: formats it to NTFS and locks
-write access so that only the current Windows account can write to it.
-Every other computer can only read/execute from it, which blocks the main
-way flash-drive malware spreads (writing a copy of itself to any writable
-removable drive it finds).
+write access so only the current Windows account can write to it. Every
+other computer can read/run from it but not write to it, which blocks the
+main way flash-drive malware spreads.
 
-Built with: Python + customtkinter, compiled to a single .exe with PyInstaller.
-No shell strings are built anywhere - every OS command is called with an
-explicit argument list, so there is no quoting for Windows to misparse.
+Why PySide6 instead of Tkinter: Qt's text engine implements the full
+Unicode Bidirectional Algorithm natively, so Hebrew strings are given in
+plain logical (typed) order and Qt displays them correctly automatically -
+no manual character reordering, which is exactly the piece that kept
+going wrong under Tkinter/HTA.
+
+Every OS command below is called with an explicit argument list (never a
+shell string), so there is nothing for cmd.exe to misquote.
 """
 
 import os
@@ -19,30 +23,14 @@ import ctypes
 import string
 import tempfile
 import subprocess
-import threading
 import time
 
-import customtkinter as ctk
-from PIL import Image
-
-try:
-    from bidi.algorithm import get_display
-    _BIDI_OK = True
-except Exception:
-    _BIDI_OK = False
-
-
-def rtl(text, lang):
-    """Tkinter draws text in logical (typed) order and has no built-in
-    Unicode Bidi Algorithm, so Hebrew comes out reading left-to-right
-    unless we reorder it ourselves first. python-bidi does that reordering
-    (and handles strings that mix Hebrew with numbers/English correctly)."""
-    if lang == "he" and _BIDI_OK and text:
-        try:
-            return get_display(text)
-        except Exception:
-            return text
-    return text
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QIcon, QPixmap, QFont
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton, QComboBox, QFrame,
+    QVBoxLayout, QHBoxLayout, QPlainTextEdit, QDialog, QLineEdit, QSizePolicy
+)
 
 
 # --------------------------------------------------------------------------
@@ -54,7 +42,7 @@ def resource_path(name):
 
 
 # --------------------------------------------------------------------------
-# Windows admin check (no external process - pure ctypes)
+# Windows admin check / elevation (pure ctypes, no external process)
 # --------------------------------------------------------------------------
 def is_admin():
     try:
@@ -64,15 +52,12 @@ def is_admin():
 
 
 def relaunch_as_admin():
-    """Re-launches this same exe/script elevated, then exits the current one."""
     params = " ".join('"{}"'.format(a) for a in sys.argv[1:])
     exe = sys.executable
     script = os.path.abspath(sys.argv[0])
     if getattr(sys, "frozen", False):
-        # Running as a compiled exe - relaunch the exe itself
         target, args = exe, params
     else:
-        # Running as a plain script under python.exe
         target, args = exe, '"{}" {}'.format(script, params)
     ctypes.windll.shell32.ShellExecuteW(None, "runas", target, args, None, 1)
     sys.exit(0)
@@ -125,8 +110,7 @@ def get_removable_drives():
 
 
 # --------------------------------------------------------------------------
-# Core operations - every command is an explicit argument list, never a
-# shell string, so there is nothing for cmd.exe to misinterpret.
+# Core operations - explicit argument lists only, never a shell string
 # --------------------------------------------------------------------------
 def run_cmd(args):
     try:
@@ -194,7 +178,8 @@ def open_in_explorer(letter):
 
 
 # --------------------------------------------------------------------------
-# Text strings (Hebrew default, English toggle)
+# Text strings - plain logical (typed) order. Qt reorders Hebrew for
+# display on its own; nothing here needs to be pre-reversed.
 # --------------------------------------------------------------------------
 STR = {
     "he": {
@@ -211,12 +196,12 @@ STR = {
         "lock_btn": "נעילת הדיסק להפצה",
         "unlock_btn": "שחזור הרשאות רגילות",
         "log_label": "יומן פעולות",
-        "footer": "הנעילה חוסמת כתיבה מכל חשבון פרט לחשבון הזה במחשב זה.",
+        "footer": "הנעילה חוסמת כתיבה מכל חשבון פרט לחשבון הזה במחשב זה. מנהל מערכת במחשב אחר עדיין יכול לעקוף את הנעילה.",
         "confirm_letter_title": "אימות דיסק",
         "confirm_letter_msg": "הקלידו את אות הדיסק הנבחר לאישור (למשל E):",
         "letter_mismatch": "האות שהוקלדה אינה תואמת. הפעולה בוטלה.",
         "confirm_format_title": "אזהרה - מחיקת נתונים",
-        "confirm_format_msg": "פעולה זו תמחק את כל תוכן הדיסק! הקלידו בדיוק את המילה הבאה כדי להמשיך:",
+        "confirm_format_msg": "פעולה זו תמחק את כל תוכן הדיסק! הקלידו בדיוק את המילה מחק כדי להמשיך:",
         "format_word": "מחק",
         "format_cancelled": "הפרמוט בוטל.",
         "formatting": "מפרמט את הדיסק ל-NTFS...",
@@ -249,12 +234,12 @@ STR = {
         "lock_btn": "Lock drive for distribution",
         "unlock_btn": "Reset to normal permissions",
         "log_label": "Status Log",
-        "footer": "Locking blocks write access from every account except this one on this PC.",
+        "footer": "Locking blocks write access from every account except this one on this PC. A local administrator on another PC can still override the lock.",
         "confirm_letter_title": "Confirm Drive",
         "confirm_letter_msg": "Type the selected drive letter to confirm (e.g. E):",
         "letter_mismatch": "The letter you typed doesn't match. Action cancelled.",
         "confirm_format_title": "Warning - data will be erased",
-        "confirm_format_msg": "This will erase everything on the drive! Type exactly the word below to continue:",
+        "confirm_format_msg": "This will erase everything on the drive! Type exactly ERASE to continue:",
         "format_word": "ERASE",
         "format_cancelled": "Format cancelled.",
         "formatting": "Formatting drive to NTFS...",
@@ -276,97 +261,199 @@ STR = {
 }
 
 # --------------------------------------------------------------------------
-# Otzaria gold/brown colour tokens (חום זהבהב) - sampled from the app icon's
-# own gold gradient rather than the app's generic purple M3 palette
+# Otzaria gold/brown colour tokens (חום זהבהב)
 # --------------------------------------------------------------------------
-C_PRIMARY = "#8C6A1F"            # golden-brown - buttons, accents
+C_PRIMARY = "#8C6A1F"
 C_ON_PRIMARY = "#FFFFFF"
-C_PRIMARY_SUBTLE = "#F3E6C8"     # light gold tint - tonal button fill
-C_SURFACE = "#FFFCF5"            # warm off-white - cards
-C_ON_SURFACE = "#3B2A0F"         # dark brown - main text
-C_ON_SURFACE_VARIANT = "#6B5730" # medium gold-brown - secondary text
-C_SURFACE_HIGH = "#F1E6CC"       # warm beige - window background
-C_SURFACE_HIGHEST = "#E8D8AE"    # deeper beige - hover/secondary bg
-C_ERROR = "#A13A1E"              # warm brick red - stays recognizable as "danger"
+C_PRIMARY_SUBTLE = "#F3E6C8"
+C_SURFACE = "#FFFCF5"
+C_ON_SURFACE = "#3B2A0F"
+C_ON_SURFACE_VARIANT = "#6B5730"
+C_SURFACE_HIGH = "#F1E6CC"
+C_SURFACE_HIGHEST = "#E8D8AE"
+C_ERROR = "#A13A1E"
 C_ON_ERROR = "#FFFFFF"
-C_OUTLINE = "#B69B5E"            # gold-brown outline/border
+C_OUTLINE = "#B69B5E"
 
-ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("blue")  # overridden per-widget below
+STYLESHEET = """
+QWidget {{
+    background-color: {surface_high};
+    color: {on_surface};
+    font-family: "Segoe UI";
+    font-size: 13px;
+}}
+QFrame#card {{
+    background-color: {surface};
+    border: 1px solid {outline};
+    border-radius: 16px;
+}}
+QFrame#topbar {{
+    background-color: {surface_highest};
+    border: none;
+    border-bottom: 1px solid {outline};
+}}
+QLabel#title {{
+    font-size: 16px;
+    font-weight: 600;
+    color: {on_surface};
+}}
+QLabel#subtitle {{
+    font-size: 11px;
+    color: {on_surface_variant};
+}}
+QLabel#cardHeader {{
+    font-size: 12px;
+    font-weight: 600;
+    color: {on_surface_variant};
+}}
+QLabel#driveInfo, QLabel#footer, QLabel#adminBadge {{
+    font-size: 11px;
+    color: {on_surface_variant};
+}}
+QPushButton {{
+    border-radius: 18px;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton#filled {{
+    background-color: {primary};
+    color: {on_primary};
+    border: none;
+}}
+QPushButton#filled:hover {{ background-color: #9C7A2F; }}
+QPushButton#filled:disabled {{ background-color: #C9BFA0; color: #FFFFFF; }}
+
+QPushButton#tonal {{
+    background-color: {primary_subtle};
+    color: {primary};
+    border: none;
+}}
+QPushButton#tonal:hover {{ background-color: {surface_highest}; }}
+QPushButton#tonal:disabled {{ color: #B8A98A; }}
+
+QPushButton#outline {{
+    background-color: {surface};
+    color: {on_surface};
+    border: 1px solid {outline};
+}}
+QPushButton#outline:hover {{ background-color: {surface_highest}; }}
+QPushButton#outline:disabled {{ color: #B8A98A; }}
+
+QPushButton#danger {{
+    background-color: {error};
+    color: {on_error};
+    border: none;
+}}
+QPushButton#danger:hover {{ background-color: #B54426; }}
+QPushButton#danger:disabled {{ background-color: #D9B7A9; color: #FFFFFF; }}
+
+QComboBox {{
+    background-color: {surface};
+    border: 1px solid {outline};
+    border-radius: 8px;
+    padding: 8px 10px;
+}}
+QPlainTextEdit#log {{
+    background-color: {on_surface};
+    color: #E8D8AE;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+    border-radius: 10px;
+    border: none;
+}}
+QDialog {{
+    background-color: {surface};
+}}
+QLineEdit {{
+    border: 1px solid {outline};
+    border-radius: 8px;
+    padding: 8px;
+    background-color: {surface};
+}}
+""".format(
+    surface=C_SURFACE, surface_high=C_SURFACE_HIGH, surface_highest=C_SURFACE_HIGHEST,
+    on_surface=C_ON_SURFACE, on_surface_variant=C_ON_SURFACE_VARIANT,
+    primary=C_PRIMARY, on_primary=C_ON_PRIMARY, primary_subtle=C_PRIMARY_SUBTLE,
+    error=C_ERROR, on_error=C_ON_ERROR, outline=C_OUTLINE,
+)
 
 
-class ConfirmDialog(ctk.CTkToplevel):
-    """Small on-brand modal used for the drive-letter and ERASE confirmations."""
+def card_frame():
+    f = QFrame()
+    f.setObjectName("card")
+    return f
 
-    def __init__(self, master, title, message, expected_word, lang):
-        super().__init__(master)
-        self.result = None
-        self.expected_word = expected_word
-        self.lang = lang
-        self.title(title)
-        self.geometry("420x260")
-        self.resizable(False, False)
-        self.configure(fg_color=C_SURFACE)
-        self.transient(master)
-        self.grab_set()
 
-        anchor = "e" if lang == "he" else "w"
-        justify = "right" if lang == "he" else "left"
+class ActionWorker(QThread):
+    """Runs a blocking OS operation off the GUI thread. Qt widgets can only
+    be touched safely from the main thread, so progress/results come back
+    via signals instead of direct calls."""
+    log_line = Signal(str)
+    finished_ok = Signal(bool)
 
-        ctk.CTkLabel(self, text=message, wraplength=370, justify=justify,
-                     text_color=C_ON_SURFACE, font=("Segoe UI", 13)).pack(padx=20, pady=(24, 10), anchor=anchor)
+    def __init__(self, func, args):
+        super().__init__()
+        self.func = func
+        self.args = args
 
-        # The word to type - in BOLD
-        if expected_word:
-            word_frame = ctk.CTkFrame(self, fg_color="transparent")
-            word_frame.pack(pady=(0, 10), anchor=anchor)
-            ctk.CTkLabel(word_frame, text=rtl(expected_word, lang), 
-                         text_color=C_PRIMARY, font=("Segoe UI", 14, "bold")).pack()
+    def run(self):
+        ok = self.func(*self.args, log=lambda m: self.log_line.emit(m))
+        self.finished_ok.emit(ok)
 
-        self.entry = ctk.CTkEntry(self, width=360, justify=justify)
-        self.entry.pack(padx=20, pady=6)
-        self.entry.focus()
 
-        btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(pady=18)
-        ctk.CTkButton(btn_row, text=rtl(STR[lang]["ok"], lang), fg_color=C_PRIMARY, hover_color=C_PRIMARY,
-                      corner_radius=18, width=110, command=self._ok).pack(side="left", padx=8)
-        ctk.CTkButton(btn_row, text=rtl(STR[lang]["cancel"], lang), fg_color=C_SURFACE_HIGHEST, text_color=C_ON_SURFACE,
-                      hover_color=C_SURFACE_HIGH, corner_radius=18, width=110, command=self._cancel).pack(side="left", padx=8)
+class ConfirmDialog(QDialog):
+    """On-brand modal used for the drive-letter and ERASE confirmations."""
 
-        self.bind("<Return>", lambda e: self._ok())
-        self.bind("<Escape>", lambda e: self._cancel())
-        self.protocol("WM_DELETE_WINDOW", self._cancel)
+    def __init__(self, parent, title, message, lang):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedSize(420, 200)
+        self.setLayoutDirection(Qt.RightToLeft if lang == "he" else Qt.LeftToRight)
 
-    def _ok(self):
-        self.result = self.entry.get()
-        self.destroy()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-    def _cancel(self):
-        self.result = None
-        self.destroy()
+        msg = QLabel(message)
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+
+        self.entry = QLineEdit()
+        layout.addWidget(self.entry)
+        self.entry.setFocus()
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton(STR[lang]["ok"])
+        ok_btn.setObjectName("filled")
+        cancel_btn = QPushButton(STR[lang]["cancel"])
+        cancel_btn.setObjectName("outline")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+        self.entry.returnPressed.connect(self.accept)
 
     @staticmethod
-    def ask(master, title, message, expected_word, lang):
-        dlg = ConfirmDialog(master, title, message, expected_word, lang)
-        master.wait_window(dlg)
-        return dlg.result
+    def ask(parent, title, message, lang):
+        dlg = ConfirmDialog(parent, title, message, lang)
+        if dlg.exec() == QDialog.Accepted:
+            return dlg.entry.text()
+        return None
 
 
-class App(ctk.CTk):
+class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.lang = "he"
         self.drives = []
         self.selected = None
+        self._worker = None
 
-        self.title(STR[self.lang]["app_title"])
-        self.geometry("560x680")
-        self.configure(fg_color=C_SURFACE_HIGH)
-        self.resizable(False, False)
-
+        self.setFixedSize(580, 700)
         try:
-            self.iconbitmap(resource_path("otzaria-usb-lock.ico"))
+            self.setWindowIcon(QIcon(resource_path("otzaria-usb-lock.ico")))
         except Exception:
             pass
 
@@ -377,92 +464,130 @@ class App(ctk.CTk):
 
     # ---------------- UI construction ----------------
     def _build_ui(self):
-        # Topbar
-        top = ctk.CTkFrame(self, fg_color=C_SURFACE_HIGHEST, corner_radius=0, height=76)
-        top.pack(fill="x")
-        top.pack_propagate(False)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
+        # Topbar
+        top = QFrame()
+        top.setObjectName("topbar")
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(18, 14, 18, 14)
+
+        logo = QLabel()
         try:
-            logo_img = Image.open(resource_path("logo-80.png"))
-            self.logo_ctk = ctk.CTkImage(light_image=logo_img, size=(40, 40))
-            ctk.CTkLabel(top, image=self.logo_ctk, text="").pack(side="left", padx=(18, 10), pady=16)
+            pix = QPixmap(resource_path("logo-80.png")).scaled(
+                40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo.setPixmap(pix)
         except Exception:
             pass
+        top_layout.addWidget(logo)
 
-        title_box = ctk.CTkFrame(top, fg_color="transparent")
-        title_box.pack(side="left", pady=10)
-        self.lbl_title = ctk.CTkLabel(title_box, text="", font=("Segoe UI", 16, "bold"), text_color=C_ON_SURFACE)
-        self.lbl_title.pack(anchor="w")
-        self.lbl_subtitle = ctk.CTkLabel(title_box, text="", font=("Segoe UI", 11), text_color=C_ON_SURFACE_VARIANT)
-        self.lbl_subtitle.pack(anchor="w")
+        title_box = QVBoxLayout()
+        self.lbl_title = QLabel()
+        self.lbl_title.setObjectName("title")
+        self.lbl_subtitle = QLabel()
+        self.lbl_subtitle.setObjectName("subtitle")
+        title_box.addWidget(self.lbl_title)
+        title_box.addWidget(self.lbl_subtitle)
+        top_layout.addLayout(title_box)
+        top_layout.addStretch()
 
-        self.btn_lang = ctk.CTkButton(top, text="", width=90, corner_radius=16,
-                                       fg_color=C_SURFACE, text_color=C_PRIMARY, hover_color=C_PRIMARY_SUBTLE,
-                                       border_width=1, border_color=C_OUTLINE, command=self.toggle_lang)
-        self.btn_lang.pack(side="right", padx=18)
+        self.btn_lang = QPushButton()
+        self.btn_lang.setObjectName("outline")
+        self.btn_lang.setFixedWidth(90)
+        self.btn_lang.clicked.connect(self.toggle_lang)
+        top_layout.addWidget(self.btn_lang)
 
-        # Admin badge
-        self.lbl_admin = ctk.CTkLabel(self, text="", font=("Segoe UI", 11), text_color=C_ON_SURFACE_VARIANT)
-        self.lbl_admin.pack(anchor="e", padx=20, pady=(10, 0))
+        root.addWidget(top)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(20, 14, 20, 14)
+        body.setSpacing(12)
+
+        self.lbl_admin = QLabel()
+        self.lbl_admin.setObjectName("adminBadge")
+        self.lbl_admin.setAlignment(Qt.AlignRight)
+        body.addWidget(self.lbl_admin)
 
         # Drive card
-        card1 = ctk.CTkFrame(self, fg_color=C_SURFACE, corner_radius=16, border_width=1, border_color=C_OUTLINE)
-        card1.pack(fill="x", padx=20, pady=(10, 12))
-        self.lbl_select = ctk.CTkLabel(card1, text="", font=("Segoe UI", 12, "bold"), text_color=C_ON_SURFACE_VARIANT)
-        self.lbl_select.pack(anchor="w", padx=16, pady=(14, 4))
+        card1 = card_frame()
+        c1 = QVBoxLayout(card1)
+        c1.setContentsMargins(16, 14, 16, 14)
+        self.lbl_select = QLabel()
+        self.lbl_select.setObjectName("cardHeader")
+        c1.addWidget(self.lbl_select)
 
-        self.drive_var = ctk.StringVar(value="")
-        self.drive_menu = ctk.CTkOptionMenu(card1, variable=self.drive_var, values=[""], command=self._on_drive_change,
-                                             fg_color=C_SURFACE, text_color=C_ON_SURFACE, button_color=C_PRIMARY,
-                                             button_hover_color=C_PRIMARY, dropdown_fg_color=C_SURFACE, width=480)
-        self.drive_menu.pack(padx=16, pady=4, fill="x")
+        self.drive_combo = QComboBox()
+        self.drive_combo.currentIndexChanged.connect(self._on_drive_change)
+        c1.addWidget(self.drive_combo)
 
-        self.lbl_drive_info = ctk.CTkLabel(card1, text="", font=("Segoe UI", 11), text_color=C_ON_SURFACE_VARIANT, justify="left")
-        self.lbl_drive_info.pack(anchor="w", padx=16, pady=(4, 4))
+        self.lbl_drive_info = QLabel()
+        self.lbl_drive_info.setObjectName("driveInfo")
+        self.lbl_drive_info.setWordWrap(True)
+        c1.addWidget(self.lbl_drive_info)
 
-        self.btn_refresh = ctk.CTkButton(card1, text="", corner_radius=18, fg_color=C_SURFACE_HIGHEST,
-                                          text_color=C_ON_SURFACE, hover_color=C_SURFACE_HIGH,
-                                          border_width=1, border_color=C_OUTLINE, command=self.refresh_drives)
-        self.btn_refresh.pack(anchor="w", padx=16, pady=(0, 14))
+        self.btn_refresh = QPushButton()
+        self.btn_refresh.setObjectName("outline")
+        self.btn_refresh.clicked.connect(self.refresh_drives)
+        c1.addWidget(self.btn_refresh, alignment=Qt.AlignLeft)
+        body.addWidget(card1)
 
         # Actions card
-        card2 = ctk.CTkFrame(self, fg_color=C_SURFACE, corner_radius=16, border_width=1, border_color=C_OUTLINE)
-        card2.pack(fill="x", padx=20, pady=(0, 12))
-        self.lbl_prepare = ctk.CTkLabel(card2, text="", font=("Segoe UI", 12, "bold"), text_color=C_ON_SURFACE_VARIANT)
-        self.lbl_prepare.pack(anchor="w", padx=16, pady=(14, 8))
+        card2 = card_frame()
+        c2 = QVBoxLayout(card2)
+        c2.setContentsMargins(16, 14, 16, 14)
+        self.lbl_prepare = QLabel()
+        self.lbl_prepare.setObjectName("cardHeader")
+        c2.addWidget(self.lbl_prepare)
 
-        row1 = ctk.CTkFrame(card2, fg_color="transparent")
-        row1.pack(fill="x", padx=16)
-        self.btn_open = ctk.CTkButton(row1, text="", corner_radius=18, fg_color=C_PRIMARY_SUBTLE, text_color=C_PRIMARY,
-                                       hover_color=C_SURFACE_HIGH, state="disabled", command=self.on_open)
-        self.btn_open.pack(side="left", expand=True, fill="x", padx=(0, 6), pady=4)
-        self.btn_format = ctk.CTkButton(row1, text="", corner_radius=18, fg_color=C_SURFACE, text_color=C_ON_SURFACE,
-                                         hover_color=C_SURFACE_HIGH, border_width=1, border_color=C_OUTLINE,
-                                         state="disabled", command=self.on_format)
-        self.btn_format.pack(side="left", expand=True, fill="x", padx=(6, 0), pady=4)
+        row1 = QHBoxLayout()
+        self.btn_open = QPushButton()
+        self.btn_open.setObjectName("tonal")
+        self.btn_open.setEnabled(False)
+        self.btn_open.clicked.connect(self.on_open)
+        self.btn_format = QPushButton()
+        self.btn_format.setObjectName("outline")
+        self.btn_format.setEnabled(False)
+        self.btn_format.clicked.connect(self.on_format)
+        row1.addWidget(self.btn_open)
+        row1.addWidget(self.btn_format)
+        c2.addLayout(row1)
 
-        row2 = ctk.CTkFrame(card2, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=(6, 16))
-        self.btn_lock = ctk.CTkButton(row2, text="", corner_radius=18, fg_color=C_PRIMARY, text_color=C_ON_PRIMARY,
-                                       hover_color=C_PRIMARY, state="disabled", command=self.on_lock)
-        self.btn_lock.pack(side="left", expand=True, fill="x", padx=(0, 6), pady=4)
-        self.btn_unlock = ctk.CTkButton(row2, text="", corner_radius=18, fg_color=C_ERROR, text_color=C_ON_ERROR,
-                                         hover_color=C_ERROR, state="disabled", command=self.on_unlock)
-        self.btn_unlock.pack(side="left", expand=True, fill="x", padx=(6, 0), pady=4)
+        row2 = QHBoxLayout()
+        self.btn_lock = QPushButton()
+        self.btn_lock.setObjectName("filled")
+        self.btn_lock.setEnabled(False)
+        self.btn_lock.clicked.connect(self.on_lock)
+        self.btn_unlock = QPushButton()
+        self.btn_unlock.setObjectName("danger")
+        self.btn_unlock.setEnabled(False)
+        self.btn_unlock.clicked.connect(self.on_unlock)
+        row2.addWidget(self.btn_lock)
+        row2.addWidget(self.btn_unlock)
+        c2.addLayout(row2)
+        body.addWidget(card2)
 
         # Log card
-        card3 = ctk.CTkFrame(self, fg_color=C_SURFACE, corner_radius=16, border_width=1, border_color=C_OUTLINE)
-        card3.pack(fill="both", expand=True, padx=20, pady=(0, 10))
-        self.lbl_log = ctk.CTkLabel(card3, text="", font=("Segoe UI", 12, "bold"), text_color=C_ON_SURFACE_VARIANT)
-        self.lbl_log.pack(anchor="w", padx=16, pady=(14, 6))
-        self.txt_log = ctk.CTkTextbox(card3, fg_color=C_ON_SURFACE, text_color="#E8D8AE", font=("Consolas", 11),
-                                       corner_radius=10)
-        self.txt_log.pack(fill="both", expand=True, padx=16, pady=(0, 14))
-        self.txt_log.configure(state="disabled")
+        card3 = card_frame()
+        c3 = QVBoxLayout(card3)
+        c3.setContentsMargins(16, 14, 16, 14)
+        self.lbl_log = QLabel()
+        self.lbl_log.setObjectName("cardHeader")
+        c3.addWidget(self.lbl_log)
+        self.txt_log = QPlainTextEdit()
+        self.txt_log.setObjectName("log")
+        self.txt_log.setReadOnly(True)
+        self.txt_log.setLayoutDirection(Qt.LeftToRight)  # command output is English
+        c3.addWidget(self.txt_log)
+        body.addWidget(card3, stretch=1)
 
-        self.lbl_footer = ctk.CTkLabel(self, text="", font=("Segoe UI", 10), text_color=C_ON_SURFACE_VARIANT,
-                                        wraplength=520, justify="left")
-        self.lbl_footer.pack(padx=20, pady=(0, 14))
+        self.lbl_footer = QLabel()
+        self.lbl_footer.setObjectName("footer")
+        self.lbl_footer.setWordWrap(True)
+        body.addWidget(self.lbl_footer)
+
+        root.addLayout(body)
 
     # ---------------- language ----------------
     def toggle_lang(self):
@@ -471,96 +596,86 @@ class App(ctk.CTk):
         self._render_drive_info()
 
     def t(self, key):
-        """Look up a string in the current language and reorder it for
-        correct right-to-left display when needed."""
-        return rtl(STR[self.lang][key], self.lang)
+        return STR[self.lang][key]
 
     def _apply_lang(self):
-        self.title(self.t("app_title"))
-        self.lbl_title.configure(text=self.t("app_title"))
-        self.lbl_subtitle.configure(text=self.t("app_subtitle"))
-        self.btn_lang.configure(text=self.t("lang_btn"))
-        self.lbl_select.configure(text=self.t("select_drive"))
-        self.btn_refresh.configure(text="🔄 " + self.t("refresh"))
-        self.lbl_prepare.configure(text=self.t("prepare"))
-        self.btn_open.configure(text=self.t("open_drive"))
-        self.btn_format.configure(text=self.t("format_btn"))
-        self.btn_lock.configure(text="🔒 " + self.t("lock_btn"))
-        self.btn_unlock.configure(text="↺ " + self.t("unlock_btn"))
-        self.lbl_log.configure(text=self.t("log_label"))
-        self.lbl_footer.configure(text=self.t("footer"))
-        anchor = "e" if self.lang == "he" else "w"
-        just = "right" if self.lang == "he" else "left"
-        for w in (self.lbl_title, self.lbl_subtitle, self.lbl_select, self.lbl_prepare, self.lbl_log):
-            w.configure(anchor=anchor)
-        self.lbl_footer.configure(justify=just)
+        s = STR[self.lang]
+        rtl = self.lang == "he"
+        self.setLayoutDirection(Qt.RightToLeft if rtl else Qt.LeftToRight)
+        self.setWindowTitle(s["app_title"])
+
+        self.lbl_title.setText(s["app_title"])
+        self.lbl_subtitle.setText(s["app_subtitle"])
+        self.btn_lang.setText(s["lang_btn"])
+        self.lbl_select.setText(s["select_drive"])
+        self.btn_refresh.setText("🔄  " + s["refresh"])
+        self.lbl_prepare.setText(s["prepare"])
+        self.btn_open.setText(s["open_drive"])
+        self.btn_format.setText(s["format_btn"])
+        self.btn_lock.setText("🔒  " + s["lock_btn"])
+        self.btn_unlock.setText("↺  " + s["unlock_btn"])
+        self.lbl_log.setText(s["log_label"])
+        self.lbl_footer.setText(s["footer"])
         self._check_admin()
 
     # ---------------- log ----------------
     def log(self, msg):
         if not msg:
             return
-        self.after(0, lambda: self._log_to_widget(msg))
-
-    def _log_to_widget(self, msg):
-        self.txt_log.configure(state="normal")
         stamp = time.strftime("%H:%M:%S")
-        self.txt_log.insert("end", "[{}] {}\n".format(stamp, msg))
-        self.txt_log.see("end")
-        self.txt_log.configure(state="disabled")
+        self.txt_log.appendPlainText("[{}] {}".format(stamp, msg))
 
     # ---------------- admin ----------------
     def _check_admin(self):
         if is_admin():
-            self.lbl_admin.configure(text="✓ " + self.t("admin_ok"), text_color="#2E7D32")
+            self.lbl_admin.setText("✓ " + self.t("admin_ok"))
+            self.lbl_admin.setStyleSheet("color: #2E7D32;")
         else:
-            self.lbl_admin.configure(text="⚠ " + self.t("admin_bad"), text_color=C_ERROR)
+            self.lbl_admin.setText("⚠ " + self.t("admin_bad"))
+            self.lbl_admin.setStyleSheet("color: {};".format(C_ERROR))
 
     # ---------------- drives ----------------
     def refresh_drives(self):
         self.drives = get_removable_drives()
+        self.drive_combo.blockSignals(True)
+        self.drive_combo.clear()
         if not self.drives:
-            no_drives = self.t("no_drives")
-            self.drive_menu.configure(values=[no_drives])
-            self.drive_var.set(no_drives)
+            self.drive_combo.addItem(self.t("no_drives"))
+            self.drive_combo.blockSignals(False)
             self._set_buttons(False)
             self.selected = None
             self._render_drive_info()
             return
-        labels = ["{}:  {}".format(d["letter"], d["label"]) for d in self.drives]
-        self.drive_menu.configure(values=labels)
-        self.drive_var.set(labels[0])
+        for d in self.drives:
+            self.drive_combo.addItem("{}:  {}".format(d["letter"], d["label"]))
+        self.drive_combo.blockSignals(False)
+        self.drive_combo.setCurrentIndex(0)
         self.selected = self.drives[0]
         self._set_buttons(True)
         self._render_drive_info()
 
-    def _on_drive_change(self, value):
-        for d in self.drives:
-            if value.startswith(d["letter"] + ":"):
-                self.selected = d
-                break
+    def _on_drive_change(self, index):
+        if 0 <= index < len(self.drives):
+            self.selected = self.drives[index]
         self._render_drive_info()
 
     def _render_drive_info(self):
         if not self.selected:
-            self.lbl_drive_info.configure(text="")
+            self.lbl_drive_info.setText("")
             return
-        text = STR[self.lang]["drive_info"].format(
-            label=self.selected["label"] or "-", fs=self.selected["fs"], size=self.selected["size_gb"])
-        self.lbl_drive_info.configure(text=rtl(text, self.lang))
+        self.lbl_drive_info.setText(STR[self.lang]["drive_info"].format(
+            label=self.selected["label"] or "-", fs=self.selected["fs"], size=self.selected["size_gb"]))
 
     def _set_buttons(self, enabled):
-        state = "normal" if enabled else "disabled"
         for b in (self.btn_open, self.btn_format, self.btn_lock, self.btn_unlock):
-            b.configure(state=state)
+            b.setEnabled(enabled)
 
     # ---------------- confirmations ----------------
     def _confirm_letter(self):
         if not self.selected:
             self.log(self.t("no_drive_selected"))
             return False
-        typed = ConfirmDialog.ask(self, self.t("confirm_letter_title"), self.t("confirm_letter_msg"),
-                                  self.selected["letter"], self.lang)
+        typed = ConfirmDialog.ask(self, self.t("confirm_letter_title"), self.t("confirm_letter_msg"), self.lang)
         if typed is None:
             return False
         if typed.strip().rstrip(":").upper() != self.selected["letter"]:
@@ -569,11 +684,8 @@ class App(ctk.CTk):
         return True
 
     def _confirm_erase_word(self):
-        # Compare against the RAW word (not bidi-reordered) - the entry box
-        # holds what the user actually typed, in logical order.
         expected = STR[self.lang]["format_word"]
-        typed = ConfirmDialog.ask(self, self.t("confirm_format_title"), self.t("confirm_format_msg"),
-                                  expected, self.lang)
+        typed = ConfirmDialog.ask(self, self.t("confirm_format_title"), self.t("confirm_format_msg"), self.lang)
         if typed is None or typed.strip() != expected:
             self.log(self.t("format_cancelled"))
             return False
@@ -604,12 +716,14 @@ class App(ctk.CTk):
         self._set_buttons(False)
         self.log(self.t("formatting"))
 
-        def work():
-            ok = format_drive_ntfs(letter, "OTZARIA", log=self.log)
+        def on_done(ok):
             self.log(self.t("format_done") if ok else self.t("format_failed"))
-            self.after(0, self.refresh_drives)
+            self.refresh_drives()
 
-        threading.Thread(target=work, daemon=True).start()
+        self._worker = ActionWorker(format_drive_ntfs, (letter, "OTZARIA"))
+        self._worker.log_line.connect(self.log)
+        self._worker.finished_ok.connect(on_done)
+        self._worker.start()
 
     def on_lock(self):
         if not self._confirm_letter():
@@ -618,12 +732,14 @@ class App(ctk.CTk):
         self._set_buttons(False)
         self.log(self.t("locking"))
 
-        def work():
-            ok = lock_drive(letter, log=self.log)
+        def on_done(ok):
             self.log(self.t("lock_done") if ok else self.t("lock_failed"))
-            self.after(0, lambda: self._set_buttons(True))
+            self._set_buttons(True)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._worker = ActionWorker(lock_drive, (letter,))
+        self._worker.log_line.connect(self.log)
+        self._worker.finished_ok.connect(on_done)
+        self._worker.start()
 
     def on_unlock(self):
         if not self._confirm_letter():
@@ -632,12 +748,14 @@ class App(ctk.CTk):
         self._set_buttons(False)
         self.log(self.t("unlocking"))
 
-        def work():
-            ok = unlock_drive(letter, log=self.log)
+        def on_done(ok):
             self.log(self.t("unlock_done") if ok else self.t("unlock_failed"))
-            self.after(0, lambda: self._set_buttons(True))
+            self._set_buttons(True)
 
-        threading.Thread(target=work, daemon=True).start()
+        self._worker = ActionWorker(unlock_drive, (letter,))
+        self._worker.log_line.connect(self.log)
+        self._worker.finished_ok.connect(on_done)
+        self._worker.start()
 
 
 def main():
@@ -647,8 +765,12 @@ def main():
     if not is_admin():
         relaunch_as_admin()
         return
-    app = App()
-    app.mainloop()
+
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLESHEET)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
