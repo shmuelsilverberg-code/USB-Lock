@@ -221,8 +221,8 @@ STR = {
         "cancel": "ביטול",
     },
     "en": {
-        "app_title": "Otzaria USB Lock",
-        "app_subtitle": "Prepare a drive for safe distribution",
+        "app_title": "Otzaria USB Locker",
+        "app_subtitle": "Prepare a USB for safe distribution",
         "lang_btn": "עברית",
         "select_drive": "Select USB Drive",
         "refresh": "Refresh list",
