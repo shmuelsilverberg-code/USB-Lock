@@ -135,7 +135,7 @@ def format_drive_ntfs(letter, label="OTZARIA", log=lambda *_: None):
 
     label = str(label).replace("\r", " ").replace("\n", " ").strip()
     if not label:
-    label = "OTZARIA"
+        label = "OTZARIA"
 
     script = "select volume {}\nformat fs=ntfs quick label={}\n".format(letter, label)
     tmp_path = os.path.join(tempfile.gettempdir(), "otz_diskpart_{}.txt".format(int(time.time())))
