@@ -263,7 +263,7 @@ STR = {
 # --------------------------------------------------------------------------
 # Otzaria gold/brown colour tokens (חום זהבהב)
 # --------------------------------------------------------------------------
-C_PRIMARY = "#8C6A1F"
+C_PRIMARY = "#805610"
 C_ON_PRIMARY = "#FFFFFF"
 C_PRIMARY_SUBTLE = "#F3E6C8"
 C_SURFACE = "#FFFCF5"
