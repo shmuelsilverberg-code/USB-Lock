@@ -275,6 +275,7 @@ C_ERROR = "#BA1A1A"
 C_ON_ERROR = "#FFFFFF"
 C_OUTLINE = "#817567"
 C_OUTLINE_VARIANT = "#D3C4B4"
+C_SUCCESS = "#2E7D32"
 
 # --------------------------------------------------------------------------
 # Otzaria / Material 3-inspired colour tokens
