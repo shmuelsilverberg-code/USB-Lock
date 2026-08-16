@@ -260,22 +260,6 @@ STR = {
     },
 }
 
-# --------------------------------------------------------------------------
-# Otzaria gold/brown colour tokens (חום זהבהב)
-# --------------------------------------------------------------------------
-C_PRIMARY = "#805610"
-C_ON_PRIMARY = "#FFFFFF"
-C_PRIMARY_SUBTLE = "#FFDDB3"
-C_SURFACE = "#F6EDE5"
-C_ON_SURFACE = "#201B13"
-C_ON_SURFACE_VARIANT = "#4F4539"
-C_SURFACE_HIGH = "#FFF8F4"
-C_SURFACE_HIGHEST = "#EDE0D4"
-C_ERROR = "#BA1A1A"
-C_ON_ERROR = "#FFFFFF"
-C_OUTLINE = "#817567"
-C_OUTLINE_VARIANT = "#D3C4B4"
-C_SUCCESS = "#2E7D32"
 
 # --------------------------------------------------------------------------
 # Otzaria / Material 3-inspired colour tokens
@@ -752,7 +736,7 @@ class MainWindow(QWidget):
     def _check_admin(self):
         if is_admin():
             self.lbl_admin.setText("✓ " + self.t("admin_ok"))
-            self.lbl_admin.setStyleSheet("color: #2E7D32;")
+            self.lbl_admin.setStyleSheet("color: {};".format(C_SUCCESS))
         else:
             self.lbl_admin.setText("⚠ " + self.t("admin_bad"))
             self.lbl_admin.setStyleSheet("color: {};".format(C_ERROR))
