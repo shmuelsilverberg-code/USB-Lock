@@ -276,107 +276,228 @@ C_ON_ERROR = "#FFFFFF"
 C_OUTLINE = "#817567"
 C_OUTLINE_VARIANT = "#D3C4B4"
 
+# --------------------------------------------------------------------------
+# Otzaria / Material 3-inspired colour tokens
+# --------------------------------------------------------------------------
+C_PRIMARY = "#805610"
+C_ON_PRIMARY = "#FFFFFF"
+C_PRIMARY_SUBTLE = "#FFDDB3"
+
+# Main window background and surfaces
+C_SURFACE = "#F6EDE5" # Main beige background
+C_SURFACE_LOW = "#F1E7DE" # Optional lower/elevated surface
+C_SURFACE_HIGH = "#FFF8F4" # Cards and controls
+C_SURFACE_HIGHEST = "#EDE0D4" # Stronger surface / dividers / hover base
+
+C_ON_SURFACE = "#201B13"
+C_ON_SURFACE_VARIANT = "#4F4539"
+
+C_ERROR = "#BA1A1A"
+C_ON_ERROR = "#FFFFFF"
+C_OUTLINE = "#817567"
+C_OUTLINE_VARIANT = "#D3C4B4"
+
+# Status colors
+C_SUCCESS = "#2E7D32"
+C_DISABLED = "#B8AEA4"
+C_LOG_TEXT = "#F3E6D8"
+
 STYLESHEET = """
 QWidget {{
-    background-color: {surface_high};
-    color: {on_surface};
-    font-family: "Segoe UI";
-    font-size: 13px;
+background-color: {surface};
+color: {on_surface};
+font-family: "Segoe UI";
+font-size: 13px;
 }}
-QFrame#card {{
-    background-color: {surface};
-    border: 1px solid {outline};
-    border-radius: 16px;
-}}
-QFrame#topbar {{
-    background-color: {surface_highest};
-    border: none;
-    border-bottom: 1px solid {outline};
-}}
-QLabel#title {{
-    font-size: 16px;
-    font-weight: 600;
-    color: {on_surface};
-}}
-QLabel#subtitle {{
-    font-size: 11px;
-    color: {on_surface_variant};
-}}
-QLabel#cardHeader {{
-    font-size: 12px;
-    font-weight: 600;
-    color: {on_surface_variant};
-}}
-QLabel#driveInfo, QLabel#footer, QLabel#adminBadge {{
-    font-size: 11px;
-    color: {on_surface_variant};
-}}
-QPushButton {{
-    border-radius: 18px;
-    padding: 10px 16px;
-    font-size: 13px;
-    font-weight: 600;
-}}
-QPushButton#filled {{
-    background-color: {primary};
-    color: {on_primary};
-    border: none;
-}}
-QPushButton#filled:hover {{ background-color: #9C7A2F; }}
-QPushButton#filled:disabled {{ background-color: #C9BFA0; color: #FFFFFF; }}
 
-QPushButton#tonal {{
-    background-color: {primary_subtle};
-    color: {primary};
-    border: none;
-}}
-QPushButton#tonal:hover {{ background-color: {surface_highest}; }}
-QPushButton#tonal:disabled {{ color: #B8A98A; }}
-
-QPushButton#outline {{
-    background-color: {surface};
-    color: {on_surface};
-    border: 1px solid {outline};
-}}
-QPushButton#outline:hover {{ background-color: {surface_highest}; }}
-QPushButton#outline:disabled {{ color: #B8A98A; }}
-
-QPushButton#danger {{
-    background-color: {error};
-    color: {on_error};
-    border: none;
-}}
-QPushButton#danger:hover {{ background-color: #B54426; }}
-QPushButton#danger:disabled {{ background-color: #D9B7A9; color: #FFFFFF; }}
-
-QComboBox {{
-    background-color: {surface};
-    border: 1px solid {outline};
-    border-radius: 8px;
-    padding: 8px 10px;
-}}
-QPlainTextEdit#log {{
-    background-color: {on_surface};
-    color: #E8D8AE;
-    font-family: Consolas, monospace;
-    font-size: 11px;
-    border-radius: 10px;
-    border: none;
-}}
 QDialog {{
-    background-color: {surface};
+background-color: {surface};
 }}
+
+QFrame#topbar {{
+background-color: {surface};
+border: none;
+border-bottom: 1px solid {outline_variant};
+}}
+
+QFrame#card {{
+background-color: {surface_high};
+border: 1px solid {outline_variant};
+border-radius: 8px;
+}}
+
+QLabel#title {{
+background: transparent;
+font-size: 16px;
+font-weight: 600;
+color: {on_surface};
+}}
+
+QLabel#subtitle,
+QLabel#cardHeader,
+QLabel#driveInfo,
+QLabel#footer,
+QLabel#adminBadge {{
+background: transparent;
+color: {on_surface_variant};
+}}
+
+QLabel#subtitle,
+QLabel#driveInfo,
+QLabel#footer,
+QLabel#adminBadge {{
+font-size: 11px;
+}}
+
+QLabel#cardHeader {{
+font-size: 12px;
+font-weight: 600;
+}}
+
+QPushButton {{
+min-height: 36px;
+padding: 0 16px;
+border-radius: 8px;
+font-size: 13px;
+font-weight: 600;
+}}
+
+/* Filled primary button */
+QPushButton#filled {{
+background-color: {primary};
+color: {on_primary};
+border: none;
+}}
+
+QPushButton#filled:hover {{
+background-color: #8D6424;
+}}
+
+QPushButton#filled:pressed,
+QPushButton#filled:focus {{
+background-color: #956D2E;
+}}
+
+QPushButton#filled:disabled {{
+background-color: #D0C6BD;
+color: #FFFFFF;
+}}
+
+/* Tonal button */
+QPushButton#tonal {{
+background-color: {primary_subtle};
+color: {primary};
+border: none;
+}}
+
+QPushButton#tonal:hover {{
+background-color: #F1D2A8;
+}}
+
+QPushButton#tonal:pressed,
+QPushButton#tonal:focus {{
+background-color: #EBC591;
+}}
+
+QPushButton#tonal:disabled {{
+background-color: #E7DED5;
+color: {disabled};
+}}
+
+/* Outlined secondary button */
+QPushButton#outline {{
+background-color: transparent;
+color: {primary};
+border: 1px solid {outline};
+}}
+
+QPushButton#outline:hover {{
+background-color: #F0E4D8;
+}}
+
+QPushButton#outline:pressed,
+QPushButton#outline:focus {{
+background-color: #E9DCCE;
+}}
+
+QPushButton#outline:disabled {{
+color: {disabled};
+border-color: #CFC4BA;
+}}
+
+/* Destructive button */
+QPushButton#danger {{
+background-color: {error};
+color: {on_error};
+border: none;
+}}
+
+QPushButton#danger:hover {{
+background-color: #C43A2A;
+}}
+
+QPushButton#danger:pressed,
+QPushButton#danger:focus {{
+background-color: #A93226;
+}}
+
+QPushButton#danger:disabled {{
+background-color: #D9C4BD;
+color: #FFFFFF;
+}}
+
+QComboBox,
 QLineEdit {{
-    border: 1px solid {outline};
-    border-radius: 8px;
-    padding: 8px;
-    background-color: {surface};
+min-height: 36px;
+padding: 0 12px;
+background-color: {surface_high};
+color: {on_surface};
+border: 1px solid {outline};
+border-radius: 18px;
+}}
+
+QComboBox:hover,
+QLineEdit:hover {{
+border-color: {primary};
+}}
+
+QComboBox:focus,
+QLineEdit:focus {{
+border: 2px solid {primary};
+}}
+
+QComboBox QAbstractItemView {{
+background-color: {surface_high};
+color: {on_surface};
+border: 1px solid {outline_variant};
+selection-background-color: {primary_subtle};
+selection-color: {on_surface};
+}}
+
+QPlainTextEdit#log {{
+background-color: #201B13;
+color: {log_text};
+font-family: Consolas, monospace;
+font-size: 11px;
+border: 1px solid {outline_variant};
+border-radius: 8px;
+padding: 6px;
 }}
 """.format(
-    surface=C_SURFACE, surface_high=C_SURFACE_HIGH, surface_highest=C_SURFACE_HIGHEST,
-    on_surface=C_ON_SURFACE, on_surface_variant=C_ON_SURFACE_VARIANT,
-    primary=C_PRIMARY, on_primary=C_ON_PRIMARY, primary_subtle=C_PRIMARY_SUBTLE,
-    error=C_ERROR, on_error=C_ON_ERROR, outline=C_OUTLINE,
+surface=C_SURFACE,
+surface_high=C_SURFACE_HIGH,
+on_surface=C_ON_SURFACE,
+on_surface_variant=C_ON_SURFACE_VARIANT,
+primary=C_PRIMARY,
+on_primary=C_ON_PRIMARY,
+primary_subtle=C_PRIMARY_SUBTLE,
+error=C_ERROR,
+on_error=C_ON_ERROR,
+outline=C_OUTLINE,
+outline_variant=C_OUTLINE_VARIANT,
+disabled=C_DISABLED,
+log_text=C_LOG_TEXT,
+
 )
 
 
