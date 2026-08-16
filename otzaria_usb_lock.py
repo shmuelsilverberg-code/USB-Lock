@@ -127,6 +127,15 @@ def run_cmd(args):
 def format_drive_ntfs(letter, label="OTZARIA", log=lambda *_: None):
     """Uses diskpart - the same engine behind Windows' own Disk Management -
     since it is the most reliable option for removable media."""
+    letter = str(letter).strip().rstrip(":").upper()
+    if len(letter)!= 1 or not ("A" <= letter <= "Z"):
+    log("Invalid drive letter.")
+    return False
+
+    label = str(label).replace("\r", " ").replace("\n", " ").strip()
+    if not label:
+    label = "OTZARIA"
+
     script = "select volume {}\nformat fs=ntfs quick label={}\n".format(letter, label)
     tmp_path = os.path.join(tempfile.gettempdir(), "otz_diskpart_{}.txt".format(int(time.time())))
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -874,6 +883,8 @@ def main():
         return
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(STYLESHEET)
     win = MainWindow()
     win.show()
