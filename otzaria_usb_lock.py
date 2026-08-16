@@ -128,9 +128,10 @@ def format_drive_ntfs(letter, label="OTZARIA", log=lambda *_: None):
     """Uses diskpart - the same engine behind Windows' own Disk Management -
     since it is the most reliable option for removable media."""
     letter = str(letter).strip().rstrip(":").upper()
+   
     if len(letter)!= 1 or not ("A" <= letter <= "Z"):
-    log("Invalid drive letter.")
-    return False
+        log("Invalid drive letter.")
+        return False
 
     label = str(label).replace("\r", " ").replace("\n", " ").strip()
     if not label:
