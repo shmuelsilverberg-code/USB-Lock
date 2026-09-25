@@ -24,6 +24,9 @@ import string
 import tempfile
 import subprocess
 import time
+import json
+import shutil
+import stat
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QPixmap, QFont
@@ -39,6 +42,16 @@ from PySide6.QtWidgets import (
 def resource_path(name):
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, name)
+
+
+def resource_dir():
+    """The persistent folder this program lives in - NOT sys._MEIPASS,
+    which is a temporary extraction folder that's gone after the process
+    exits. Used for things that need to survive between runs, like
+    collected-reports/."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 # --------------------------------------------------------------------------
@@ -127,16 +140,6 @@ def run_cmd(args):
 def format_drive_ntfs(letter, label="OTZARIA", log=lambda *_: None):
     """Uses diskpart - the same engine behind Windows' own Disk Management -
     since it is the most reliable option for removable media."""
-    letter = str(letter).strip().rstrip(":").upper()
-   
-    if len(letter)!= 1 or not ("A" <= letter <= "Z"):
-        log("Invalid drive letter.")
-        return False
-
-    label = str(label).replace("\r", " ").replace("\n", " ").strip()
-    if not label:
-        label = "OTZARIA"
-
     script = "select volume {}\nformat fs=ntfs quick label={}\n".format(letter, label)
     tmp_path = os.path.join(tempfile.gettempdir(), "otz_diskpart_{}.txt".format(int(time.time())))
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -183,6 +186,189 @@ def unlock_drive(letter, log=lambda *_: None):
     return code == 0
 
 
+REPORTS_FOLDER_NAME = "reports"
+REPORTS_INCOMING_SUBFOLDER = "incoming"
+
+# How long a file must sit untouched before cleanup will treat it as
+# "finished writing" and safe to validate. Guards against reading a file
+# while a legitimate write is still in progress (the app's own temp-then-
+# rename pattern already avoids this for the final .json, but this is a
+# second, independent safety margin against any writer that doesn't).
+REPORT_MIN_AGE_SECONDS = 30
+
+
+def create_reports_folder(letter, log=lambda *_: None):
+    """Carves out reports\\incoming\\ on an otherwise-locked drive: a
+    quarantine drop zone, not a trusted destination. Nothing that lands
+    here is ever read, uploaded, or acted on in place - see
+    clean_reports_folder(), which is the only thing that ever touches
+    what shows up here, and which validates before doing anything else.
+
+    Everything outside this folder keeps the restrictive ACL set by
+    lock_drive() untouched - NTFS permissions are per-object, so a new
+    explicit ACE on just this folder does not loosen anything at the
+    drive root.
+
+    The permissions here are deliberately a "drop box": any account can
+    create new files, but - via the CREATOR OWNER mechanism, the same
+    one Windows itself uses for shared drop folders - only the account
+    that created a given file can even read, modify, or delete it
+    afterward. No account other than that file's own creator, and this
+    program's own owner (who already has full access inherited from the
+    drive root, untouched by anything here), can see this folder's
+    contents at all - not even list what's in it. This does not stop a
+    new malicious file from being dropped in (any write access that
+    legitimate software can use, malware can use too - Windows ACLs
+    identify accounts, not programs, so there is no permission that
+    admits a "genuine Otzaria write" while refusing a write from
+    anything else running under the same account), but it does stop one
+    computer from tampering with, deleting, or even reading a report
+    another computer already left there."""
+    path = "{}:\\{}\\{}".format(letter, REPORTS_FOLDER_NAME, REPORTS_INCOMING_SUBFOLDER)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        log(str(e))
+        return False
+    steps = [
+        # Everyone can create new files/folders in THIS folder - deliberately
+        # not (OI), so this does not also become a "modify existing file"
+        # grant once inherited onto a file. Deliberately NOT granting Everyone
+        # any read/list rights here at all: nothing except the file's own
+        # creator (via the CREATOR OWNER grant below) and this drive's owner
+        # (via the Full Control already inherited from the drive root) ever
+        # needs to read this folder, so no one else gets to - not even to
+        # see that a report exists, let alone read its contents.
+        ["icacls", path, "/grant", "Everyone:(WD,AD)"],
+        # Whoever creates a file/folder gets full control over just that
+        # object (Windows substitutes CREATOR OWNER for the real creating
+        # account automatically) - needed so the creator can still rename/
+        # finish writing their own file, without handing that same power
+        # to every other account.
+        ["icacls", path, "/grant", "CREATOR OWNER:(OI)(IO)(F)"],
+    ]
+    ok = True
+    for cmd in steps:
+        code, out = run_cmd(cmd)
+        if out:
+            log(out)
+        if code != 0:
+            ok = False
+    return ok
+
+
+# A legitimate report matches this exactly - see error_reports_manager's
+# OutboxReport.fileJson() in Otzaria_Offline_update. Anything that doesn't
+# match gets removed by clean_reports_folder(), never trusted or read.
+REPORT_MAX_BYTES = 65536  # generous for a small JSON report; not a log dump
+REPORT_REQUIRED_FORMAT = "otzaria-report"
+REPORT_REQUIRED_VERSION = 1
+REPORT_REQUIRED_KEYS = ("report_id", "endpoint", "body")
+
+
+def _report_file_invalid_reason(full_path):
+    """None if the file looks like a genuine, complete report; otherwise a
+    short reason string explaining why it doesn't. Schema-level validation
+    only - this can rule a file OUT, it can never prove a file is
+    authentic, since nothing here distinguishes a legitimate write from a
+    well-crafted malicious one. That's a structural limit of file
+    permissions, not something a stricter schema check can close; see the
+    project summary for the endpoint-allowlist and sandboxing that cover
+    the remaining gap on the reading/uploading side."""
+    name = os.path.basename(full_path)
+    if not name.lower().endswith(".json"):
+        return "not a .json file"
+    try:
+        st = os.stat(full_path)
+    except OSError:
+        return "unreadable"
+    if not stat.S_ISREG(st.st_mode):
+        return "not a regular file"
+    age_seconds = time.time() - st.st_mtime
+    if age_seconds < REPORT_MIN_AGE_SECONDS:
+        return "too new - possibly still being written"
+    if st.st_size > REPORT_MAX_BYTES:
+        return "too large ({} bytes)".format(st.st_size)
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return "not valid JSON"
+    if not isinstance(data, dict):
+        return "not a JSON object"
+    if data.get("format") != REPORT_REQUIRED_FORMAT or data.get("version") != REPORT_REQUIRED_VERSION:
+        return "unexpected format/version"
+    for key in REPORT_REQUIRED_KEYS:
+        if key not in data:
+            return "missing '{}'".format(key)
+    return None
+
+
+def clean_reports_folder(letter, log=lambda *_: None, collected_dir=None):
+    """Validates reports\\incoming\\ and, for anything that passes, MOVES
+    it off the USB entirely - onto this computer, into collected_dir
+    (defaults to a "collected-reports" folder next to this program).
+    Anything that doesn't pass is deleted outright. Either way, nothing
+    accepted is ever left sitting back in the publicly-writable folder:
+    once a report has been vetted, it belongs on the distributor's own
+    machine, not on a drive any computer can still write to.
+
+    Runs as the drive owner, so - unlike any other account - this has
+    full control even over files it didn't create, which is what makes
+    deleting/moving other computers' files here possible at all."""
+    incoming = "{}:\\{}\\{}".format(letter, REPORTS_FOLDER_NAME, REPORTS_INCOMING_SUBFOLDER)
+    if not os.path.isdir(incoming):
+        log("no reports folder yet - nothing to clean")
+        return True
+    if collected_dir is None:
+        collected_dir = os.path.join(resource_dir(), "collected-reports")
+    try:
+        os.makedirs(collected_dir, exist_ok=True)
+    except OSError as e:
+        log("could not prepare {}: {}".format(collected_dir, e))
+        return False
+
+    moved = 0
+    removed = 0
+    skipped = 0
+    for name in os.listdir(incoming):
+        full = os.path.join(incoming, name)
+        if not os.path.isfile(full):
+            try:
+                shutil.rmtree(full)
+                removed += 1
+                log("removed unexpected item: {}".format(name))
+            except OSError as e:
+                log("could not remove {}: {}".format(name, e))
+            continue
+        reason = _report_file_invalid_reason(full)
+        if reason == "too new - possibly still being written":
+            skipped += 1
+            continue
+        if reason:
+            try:
+                os.remove(full)
+                removed += 1
+                log("removed {} ({})".format(name, reason))
+            except OSError as e:
+                log("could not remove {}: {}".format(name, e))
+            continue
+        # Valid - move it off the USB. A collision (same report_id
+        # collected before) is resolved by keeping both rather than
+        # silently overwriting either copy.
+        dest = os.path.join(collected_dir, name)
+        if os.path.exists(dest):
+            stem, ext = os.path.splitext(name)
+            dest = os.path.join(collected_dir, "{}_{}{}".format(stem, int(time.time()), ext))
+        try:
+            shutil.move(full, dest)
+            moved += 1
+        except OSError as e:
+            log("could not move {}: {}".format(name, e))
+    log("cleanup done: moved {}, removed {}, left for next time {}".format(moved, removed, skipped))
+    return True
+
+
 def open_in_explorer(letter):
     os.startfile("{}:\\".format(letter))
 
@@ -205,8 +391,15 @@ STR = {
         "format_btn": "פרמוט ל-NTFS",
         "lock_btn": "נעילת הדיסק להפצה",
         "unlock_btn": "שחזור הרשאות רגילות",
+        "reports_btn": "יצירת תיקיית דוחות (כתיבה מותרת)",
+        "reports_creating": "יוצר תיקיית reports\\incoming עם הרשאת כתיבה...",
+        "reports_done": "תיקיית 'reports\\incoming' נוצרה. שום דבר בה לא נקרא או נשלח - היא רק תיבת קבלה שממתינה לניקוי.",
+        "reports_failed": "יצירת תיקיית הדוחות נכשלה - בדקו את יומן הפעולות.",
+        "clean_reports_btn": "בדיקה והעברת דוחות תקינים",
+        "clean_reports_running": "בודק את reports\\incoming: דוחות תקינים עוברים למחשב הזה, השאר נמחק...",
+        "clean_reports_done": "הבדיקה הושלמה - פרטים ביומן הפעולות.",
         "log_label": "יומן פעולות",
-        "footer": "הנעילה חוסמת כתיבה מכל חשבון פרט לחשבון הזה במחשב זה. מנהל מערכת במחשב אחר עדיין יכול לעקוף את הנעילה.",
+        "footer": "הנעילה חוסמת כתיבה מכל חשבון פרט לחשבון הזה במחשב זה. מנהל מערכת במחשב אחר עדיין יכול לעקוף את הנעילה. תיקיית 'reports\\incoming' היא יוצאת דופן מכוונת - כל מחשב יכול לכתוב רק אליה, אבל שום דבר בה לא נקרא או נסמך עליו עד שהוא נבדק ועובר למחשב הזה.",
         "confirm_letter_title": "אימות דיסק",
         "confirm_letter_msg": "הקלידו את אות הדיסק הנבחר לאישור (למשל E):",
         "letter_mismatch": "האות שהוקלדה אינה תואמת. הפעולה בוטלה.",
@@ -231,8 +424,8 @@ STR = {
         "cancel": "ביטול",
     },
     "en": {
-        "app_title": "Otzaria USB Locker",
-        "app_subtitle": "Prepare a USB for safe distribution",
+        "app_title": "Otzaria USB Lock",
+        "app_subtitle": "Prepare a drive for safe distribution",
         "lang_btn": "עברית",
         "select_drive": "Select USB Drive",
         "refresh": "Refresh list",
@@ -243,8 +436,15 @@ STR = {
         "format_btn": "Format to NTFS",
         "lock_btn": "Lock drive for distribution",
         "unlock_btn": "Reset to normal permissions",
+        "reports_btn": "Create reports folder (writable)",
+        "reports_creating": "Creating reports\\incoming with write access...",
+        "reports_done": "'reports\\incoming' created. Nothing in it is ever read or uploaded - it's just a drop zone waiting for cleanup.",
+        "reports_failed": "Creating the reports folder failed - check the status log.",
+        "clean_reports_btn": "Check and collect valid reports",
+        "clean_reports_running": "Checking reports\\incoming: valid reports move to this PC, everything else is deleted...",
+        "clean_reports_done": "Check finished - see the status log for details.",
         "log_label": "Status Log",
-        "footer": "Locking blocks write access from every account except this one on this PC. A local administrator on another PC can still override the lock.",
+        "footer": "Locking blocks write access from every account except this one on this PC. A local administrator on another PC can still override the lock. The 'reports\\incoming' folder is a deliberate exception - every computer can write only to it, but nothing there is ever read or trusted until it's been checked and moved to this PC.",
         "confirm_letter_title": "Confirm Drive",
         "confirm_letter_msg": "Type the selected drive letter to confirm (e.g. E):",
         "letter_mismatch": "The letter you typed doesn't match. Action cancelled.",
@@ -270,229 +470,122 @@ STR = {
     },
 }
 
-
 # --------------------------------------------------------------------------
-# Otzaria / Material 3-inspired colour tokens
+# Otzaria gold/brown colour tokens (חום זהבהב)
 # --------------------------------------------------------------------------
-C_PRIMARY = "#805610"
+C_PRIMARY = "#8C6A1F"
 C_ON_PRIMARY = "#FFFFFF"
-C_PRIMARY_SUBTLE = "#FFDDB3"
-
-# Main window background and surfaces
-C_SURFACE = "#F6EDE5" # Main beige background
-C_SURFACE_LOW = "#F1E7DE" # Optional lower/elevated surface
-C_SURFACE_HIGH = "#FFF8F4" # Cards and controls
-C_SURFACE_HIGHEST = "#EDE0D4" # Stronger surface / dividers / hover base
-
-C_ON_SURFACE = "#201B13"
-C_ON_SURFACE_VARIANT = "#4F4539"
-
-C_ERROR = "#BA1A1A"
+C_PRIMARY_SUBTLE = "#F3E6C8"
+C_SURFACE = "#FFFCF5"
+C_ON_SURFACE = "#3B2A0F"
+C_ON_SURFACE_VARIANT = "#6B5730"
+C_SURFACE_HIGH = "#F1E6CC"
+C_SURFACE_HIGHEST = "#E8D8AE"
+C_ERROR = "#A13A1E"
 C_ON_ERROR = "#FFFFFF"
-C_OUTLINE = "#817567"
-C_OUTLINE_VARIANT = "#D3C4B4"
-
-# Status colors
-C_SUCCESS = "#2E7D32"
-C_DISABLED = "#B8AEA4"
-C_LOG_TEXT = "#F3E6D8"
+C_OUTLINE = "#B69B5E"
 
 STYLESHEET = """
 QWidget {{
-background-color: {surface};
-color: {on_surface};
-font-family: "Segoe UI";
-font-size: 13px;
+    background-color: {surface_high};
+    color: {on_surface};
+    font-family: "Segoe UI";
+    font-size: 13px;
 }}
-
-QDialog {{
-background-color: {surface};
-}}
-
-QFrame#topbar {{
-background-color: {surface};
-border: none;
-border-bottom: 1px solid {outline_variant};
-}}
-
 QFrame#card {{
-background-color: {surface_high};
-border: 1px solid {outline_variant};
-border-radius: 8px;
+    background-color: {surface};
+    border: 1px solid {outline};
+    border-radius: 16px;
 }}
-
+QFrame#topbar {{
+    background-color: {surface_highest};
+    border: none;
+    border-bottom: 1px solid {outline};
+}}
 QLabel#title {{
-background: transparent;
-font-size: 16px;
-font-weight: 600;
-color: {on_surface};
+    font-size: 16px;
+    font-weight: 600;
+    color: {on_surface};
 }}
-
-QLabel#subtitle,
-QLabel#cardHeader,
-QLabel#driveInfo,
-QLabel#footer,
-QLabel#adminBadge {{
-background: transparent;
-color: {on_surface_variant};
+QLabel#subtitle {{
+    font-size: 11px;
+    color: {on_surface_variant};
 }}
-
-QLabel#subtitle,
-QLabel#driveInfo,
-QLabel#footer,
-QLabel#adminBadge {{
-font-size: 11px;
-}}
-
 QLabel#cardHeader {{
-font-size: 12px;
-font-weight: 600;
+    font-size: 12px;
+    font-weight: 600;
+    color: {on_surface_variant};
 }}
-
+QLabel#driveInfo, QLabel#footer, QLabel#adminBadge {{
+    font-size: 11px;
+    color: {on_surface_variant};
+}}
 QPushButton {{
-min-height: 36px;
-padding: 0 16px;
-border-radius: 8px;
-font-size: 13px;
-font-weight: 600;
+    border-radius: 18px;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
 }}
-
-/* Filled primary button */
 QPushButton#filled {{
-background-color: {primary};
-color: {on_primary};
-border: none;
+    background-color: {primary};
+    color: {on_primary};
+    border: none;
 }}
+QPushButton#filled:hover {{ background-color: #9C7A2F; }}
+QPushButton#filled:disabled {{ background-color: #C9BFA0; color: #FFFFFF; }}
 
-QPushButton#filled:hover {{
-background-color: #8D6424;
-}}
-
-QPushButton#filled:pressed,
-QPushButton#filled:focus {{
-background-color: #956D2E;
-}}
-
-QPushButton#filled:disabled {{
-background-color: #D0C6BD;
-color: #FFFFFF;
-}}
-
-/* Tonal button */
 QPushButton#tonal {{
-background-color: {primary_subtle};
-color: {primary};
-border: none;
+    background-color: {primary_subtle};
+    color: {primary};
+    border: none;
 }}
+QPushButton#tonal:hover {{ background-color: {surface_highest}; }}
+QPushButton#tonal:disabled {{ color: #B8A98A; }}
 
-QPushButton#tonal:hover {{
-background-color: #F1D2A8;
-}}
-
-QPushButton#tonal:pressed,
-QPushButton#tonal:focus {{
-background-color: #EBC591;
-}}
-
-QPushButton#tonal:disabled {{
-background-color: #E7DED5;
-color: {disabled};
-}}
-
-/* Outlined secondary button */
 QPushButton#outline {{
-background-color: transparent;
-color: {primary};
-border: 1px solid {outline};
+    background-color: {surface};
+    color: {on_surface};
+    border: 1px solid {outline};
 }}
+QPushButton#outline:hover {{ background-color: {surface_highest}; }}
+QPushButton#outline:disabled {{ color: #B8A98A; }}
 
-QPushButton#outline:hover {{
-background-color: #F0E4D8;
-}}
-
-QPushButton#outline:pressed,
-QPushButton#outline:focus {{
-background-color: #E9DCCE;
-}}
-
-QPushButton#outline:disabled {{
-color: {disabled};
-border-color: #CFC4BA;
-}}
-
-/* Destructive button */
 QPushButton#danger {{
-background-color: {error};
-color: {on_error};
-border: none;
+    background-color: {error};
+    color: {on_error};
+    border: none;
 }}
+QPushButton#danger:hover {{ background-color: #B54426; }}
+QPushButton#danger:disabled {{ background-color: #D9B7A9; color: #FFFFFF; }}
 
-QPushButton#danger:hover {{
-background-color: #C43A2A;
+QComboBox {{
+    background-color: {surface};
+    border: 1px solid {outline};
+    border-radius: 8px;
+    padding: 8px 10px;
 }}
-
-QPushButton#danger:pressed,
-QPushButton#danger:focus {{
-background-color: #A93226;
-}}
-
-QPushButton#danger:disabled {{
-background-color: #D9C4BD;
-color: #FFFFFF;
-}}
-
-QComboBox,
-QLineEdit {{
-min-height: 36px;
-padding: 0 12px;
-background-color: {surface_high};
-color: {on_surface};
-border: 1px solid {outline};
-border-radius: 18px;
-}}
-
-QComboBox:hover,
-QLineEdit:hover {{
-border-color: {primary};
-}}
-
-QComboBox:focus,
-QLineEdit:focus {{
-border: 2px solid {primary};
-}}
-
-QComboBox QAbstractItemView {{
-background-color: {surface_high};
-color: {on_surface};
-border: 1px solid {outline_variant};
-selection-background-color: {primary_subtle};
-selection-color: {on_surface};
-}}
-
 QPlainTextEdit#log {{
-background-color: #201B13;
-color: {log_text};
-font-family: Consolas, monospace;
-font-size: 11px;
-border: 1px solid {outline_variant};
-border-radius: 8px;
-padding: 6px;
+    background-color: {on_surface};
+    color: #E8D8AE;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+    border-radius: 10px;
+    border: none;
+}}
+QDialog {{
+    background-color: {surface};
+}}
+QLineEdit {{
+    border: 1px solid {outline};
+    border-radius: 8px;
+    padding: 8px;
+    background-color: {surface};
 }}
 """.format(
-surface=C_SURFACE,
-surface_high=C_SURFACE_HIGH,
-on_surface=C_ON_SURFACE,
-on_surface_variant=C_ON_SURFACE_VARIANT,
-primary=C_PRIMARY,
-on_primary=C_ON_PRIMARY,
-primary_subtle=C_PRIMARY_SUBTLE,
-error=C_ERROR,
-on_error=C_ON_ERROR,
-outline=C_OUTLINE,
-outline_variant=C_OUTLINE_VARIANT,
-disabled=C_DISABLED,
-log_text=C_LOG_TEXT,
-
+    surface=C_SURFACE, surface_high=C_SURFACE_HIGH, surface_highest=C_SURFACE_HIGHEST,
+    on_surface=C_ON_SURFACE, on_surface_variant=C_ON_SURFACE_VARIANT,
+    primary=C_PRIMARY, on_primary=C_ON_PRIMARY, primary_subtle=C_PRIMARY_SUBTLE,
+    error=C_ERROR, on_error=C_ON_ERROR, outline=C_OUTLINE,
 )
 
 
@@ -683,6 +776,18 @@ class MainWindow(QWidget):
         row2.addWidget(self.btn_lock)
         row2.addWidget(self.btn_unlock)
         c2.addLayout(row2)
+
+        self.btn_reports = QPushButton()
+        self.btn_reports.setObjectName("tonal")
+        self.btn_reports.setEnabled(False)
+        self.btn_reports.clicked.connect(self.on_reports)
+        c2.addWidget(self.btn_reports)
+
+        self.btn_clean_reports = QPushButton()
+        self.btn_clean_reports.setObjectName("outline")
+        self.btn_clean_reports.setEnabled(False)
+        self.btn_clean_reports.clicked.connect(self.on_clean_reports)
+        c2.addWidget(self.btn_clean_reports)
         body.addWidget(card2)
 
         # Log card
@@ -731,6 +836,8 @@ class MainWindow(QWidget):
         self.btn_format.setText(s["format_btn"])
         self.btn_lock.setText("🔒  " + s["lock_btn"])
         self.btn_unlock.setText("↺  " + s["unlock_btn"])
+        self.btn_reports.setText("📁  " + s["reports_btn"])
+        self.btn_clean_reports.setText("🧹  " + s["clean_reports_btn"])
         self.lbl_log.setText(s["log_label"])
         self.lbl_footer.setText(s["footer"])
         self._check_admin()
@@ -746,7 +853,7 @@ class MainWindow(QWidget):
     def _check_admin(self):
         if is_admin():
             self.lbl_admin.setText("✓ " + self.t("admin_ok"))
-            self.lbl_admin.setStyleSheet("color: {};".format(C_SUCCESS))
+            self.lbl_admin.setStyleSheet("color: #2E7D32;")
         else:
             self.lbl_admin.setText("⚠ " + self.t("admin_bad"))
             self.lbl_admin.setStyleSheet("color: {};".format(C_ERROR))
@@ -784,7 +891,7 @@ class MainWindow(QWidget):
             label=self.selected["label"] or "-", fs=self.selected["fs"], size=self.selected["size_gb"]))
 
     def _set_buttons(self, enabled):
-        for b in (self.btn_open, self.btn_format, self.btn_lock, self.btn_unlock):
+        for b in (self.btn_open, self.btn_format, self.btn_lock, self.btn_unlock, self.btn_reports, self.btn_clean_reports):
             b.setEnabled(enabled)
 
     # ---------------- confirmations ----------------
@@ -874,6 +981,39 @@ class MainWindow(QWidget):
         self._worker.finished_ok.connect(on_done)
         self._worker.start()
 
+    def on_reports(self):
+        if not self._confirm_letter():
+            return
+        letter = self.selected["letter"]
+        self._set_buttons(False)
+        self.log(self.t("reports_creating"))
+
+        def on_done(ok):
+            self.log(self.t("reports_done") if ok else self.t("reports_failed"))
+            self._set_buttons(True)
+
+        self._worker = ActionWorker(create_reports_folder, (letter,))
+        self._worker.log_line.connect(self.log)
+        self._worker.finished_ok.connect(on_done)
+        self._worker.start()
+
+    def on_clean_reports(self):
+        if not self.selected:
+            self.log(self.t("no_drive_selected"))
+            return
+        letter = self.selected["letter"]
+        self._set_buttons(False)
+        self.log(self.t("clean_reports_running"))
+
+        def on_done(ok):
+            self.log(self.t("clean_reports_done"))
+            self._set_buttons(True)
+
+        self._worker = ActionWorker(clean_reports_folder, (letter,))
+        self._worker.log_line.connect(self.log)
+        self._worker.finished_ok.connect(on_done)
+        self._worker.start()
+
 
 def main():
     if os.name != "nt":
@@ -884,8 +1024,6 @@ def main():
         return
 
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(STYLESHEET)
     win = MainWindow()
     win.show()
